@@ -133,7 +133,7 @@ def get_completed_daily_data(symbol):
 
     data = data.dropna(subset=["Close"])
 
-    # Remove today's incomplete candle
+    # Remove today's incomplete daily candle
     today_ist = datetime.now(IST).date()
 
     if getattr(data.index, "tz", None) is not None:
@@ -234,7 +234,7 @@ def check_stock(symbol, state):
         ema200 = float(current["EMA200"])
 
         # ----------------------------------------------------
-        # TELEGRAM MESSAGE
+        # TELEGRAM ALERT
         # ----------------------------------------------------
 
         message = (
@@ -273,37 +273,13 @@ def main():
         "Starting NSE Death Cross scanner..."
     )
 
-    # --------------------------------------------------------
-    # TELEGRAM CONNECTION TEST
-    # --------------------------------------------------------
-
-    send_telegram(
-        "🔴 DEATH CROSS TELEGRAM TEST - WORKING"
-    )
-
-    print(
-        "Telegram test completed."
-    )
-
-    # --------------------------------------------------------
-    # GET NSE STOCKS
-    # --------------------------------------------------------
-
     symbols = get_nse_symbols()
 
     print(
         f"Found {len(symbols)} NSE EQ stocks."
     )
 
-    # --------------------------------------------------------
-    # LOAD PREVIOUS STATE
-    # --------------------------------------------------------
-
     state = load_state()
-
-    # --------------------------------------------------------
-    # SCAN ALL STOCKS
-    # --------------------------------------------------------
 
     for i, symbol in enumerate(
         symbols,
@@ -320,10 +296,6 @@ def main():
         )
 
         time.sleep(0.3)
-
-    # --------------------------------------------------------
-    # SAVE STATE
-    # --------------------------------------------------------
 
     save_state(state)
 
