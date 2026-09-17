@@ -8,6 +8,10 @@ from io import StringIO
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+# ============================================================
+# TELEGRAM
+# ============================================================
+
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
@@ -35,8 +39,15 @@ def send_telegram(message):
 
     response.raise_for_status()
 
+    print("Telegram message sent successfully.")
+
+
+# ============================================================
+# NSE SYMBOLS
+# ============================================================
 
 def get_nse_symbols():
+
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -74,23 +85,35 @@ def get_nse_symbols():
     return symbols
 
 
+# ============================================================
+# STATE
+# ============================================================
+
 def load_state():
+
     if not os.path.exists(STATE_FILE):
         return {}
 
     try:
         with open(STATE_FILE, "r") as f:
             return json.load(f)
+
     except Exception:
         return {}
 
 
 def save_state(state):
+
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=2)
 
 
+# ============================================================
+# DAILY MARKET DATA
+# ============================================================
+
 def get_completed_daily_data(symbol):
+
     ticker = f"{symbol}.NS"
 
     data = yf.download(
@@ -110,7 +133,7 @@ def get_completed_daily_data(symbol):
 
     data = data.dropna(subset=["Close"])
 
-    # Remove today's incomplete daily candle
+    # Remove today's incomplete candle
     today_ist = datetime.now(IST).date()
 
     if getattr(data.index, "tz", None) is not None:
@@ -123,28 +146,49 @@ def get_completed_daily_data(symbol):
     return data
 
 
+# ============================================================
+# DEATH CROSS CHECK
+# ============================================================
+
 def check_stock(symbol, state):
+
     try:
+
         data = get_completed_daily_data(symbol)
 
         if data.empty or len(data) < 205:
             return
 
+        # ----------------------------------------------------
         # 50 EMA
+        # ----------------------------------------------------
+
         data["EMA50"] = (
             data["Close"]
-            .ewm(span=50, adjust=False)
+            .ewm(
+                span=50,
+                adjust=False
+            )
             .mean()
         )
 
+        # ----------------------------------------------------
         # 200 EMA
+        # ----------------------------------------------------
+
         data["EMA200"] = (
             data["Close"]
-            .ewm(span=200, adjust=False)
+            .ewm(
+                span=200,
+                adjust=False
+            )
             .mean()
         )
 
+        # Previous completed day
         previous = data.iloc[-2]
+
+        # Latest completed day
         current = data.iloc[-1]
 
         if (
@@ -155,16 +199,20 @@ def check_stock(symbol, state):
         ):
             return
 
-        # Fresh Death Cross:
-        # Previous completed day:
+        # ----------------------------------------------------
+        # FRESH DEATH CROSS
+        #
+        # Previous day:
         # 50 EMA >= 200 EMA
         #
-        # Latest completed day:
+        # Latest day:
         # 50 EMA < 200 EMA
+        # ----------------------------------------------------
 
         fresh_cross = (
             previous["EMA50"] >= previous["EMA200"]
-            and current["EMA50"] < current["EMA200"]
+            and
+            current["EMA50"] < current["EMA200"]
         )
 
         if not fresh_cross:
@@ -172,13 +220,22 @@ def check_stock(symbol, state):
 
         cross_date = current.name.strftime("%Y-%m-%d")
 
-        # Prevent duplicate alert for same crossover
+        # ----------------------------------------------------
+        # PREVENT DUPLICATE ALERT
+        # ----------------------------------------------------
+
         if state.get(symbol) == cross_date:
             return
 
         close_price = float(current["Close"])
+
         ema50 = float(current["EMA50"])
+
         ema200 = float(current["EMA200"])
+
+        # ----------------------------------------------------
+        # TELEGRAM MESSAGE
+        # ----------------------------------------------------
 
         message = (
             "🔴 FRESH DEATH CROSS\n\n"
@@ -200,11 +257,37 @@ def check_stock(symbol, state):
         )
 
     except Exception as e:
-        print(f"ERROR {symbol}: {e}")
 
+        print(
+            f"ERROR {symbol}: {e}"
+        )
+
+
+# ============================================================
+# MAIN
+# ============================================================
 
 def main():
-    print("Starting NSE Death Cross scanner...")
+
+    print(
+        "Starting NSE Death Cross scanner..."
+    )
+
+    # --------------------------------------------------------
+    # TELEGRAM CONNECTION TEST
+    # --------------------------------------------------------
+
+    send_telegram(
+        "🔴 DEATH CROSS TELEGRAM TEST - WORKING"
+    )
+
+    print(
+        "Telegram test completed."
+    )
+
+    # --------------------------------------------------------
+    # GET NSE STOCKS
+    # --------------------------------------------------------
 
     symbols = get_nse_symbols()
 
@@ -212,22 +295,46 @@ def main():
         f"Found {len(symbols)} NSE EQ stocks."
     )
 
+    # --------------------------------------------------------
+    # LOAD PREVIOUS STATE
+    # --------------------------------------------------------
+
     state = load_state()
 
-    for i, symbol in enumerate(symbols, start=1):
+    # --------------------------------------------------------
+    # SCAN ALL STOCKS
+    # --------------------------------------------------------
+
+    for i, symbol in enumerate(
+        symbols,
+        start=1
+    ):
 
         print(
             f"[{i}/{len(symbols)}] Checking {symbol}"
         )
 
-        check_stock(symbol, state)
+        check_stock(
+            symbol,
+            state
+        )
 
         time.sleep(0.3)
 
+    # --------------------------------------------------------
+    # SAVE STATE
+    # --------------------------------------------------------
+
     save_state(state)
 
-    print("Scan completed.")
+    print(
+        "Scan completed."
+    )
 
+
+# ============================================================
+# START
+# ============================================================
 
 if __name__ == "__main__":
     main()
