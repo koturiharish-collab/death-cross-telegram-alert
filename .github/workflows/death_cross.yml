@@ -1,10 +1,11 @@
 name: NSE Fresh Death Cross Alert
 
 on:
-  workflow_dispatch:
-
   schedule:
+    # Every hour
     - cron: "0 * * * *"
+
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -30,9 +31,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests yfinance
+          pip install -r requirements.txt
 
-      - name: Run Death Cross scanner
+      - name: Run Fresh Death Cross Scanner
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -41,13 +42,13 @@ jobs:
 
       - name: Save alert state
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add seen.json
+          git add alert_state.json
 
           if git diff --cached --quiet; then
-            echo "No alert-state changes."
+            echo "No new alert state to save."
           else
             git commit -m "Update death cross alert state"
             git push
