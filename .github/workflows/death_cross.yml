@@ -1,9 +1,9 @@
-name: NSE Death Cross Scanner
+name: Fresh Bonus & Stock Split Alerts
 
 "on":
   workflow_dispatch:
   schedule:
-    - cron: "15 * * * *"
+    - cron: "0 * * * *"
 
 permissions:
   contents: write
@@ -13,33 +13,36 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
         run: |
-          pip install pandas requests yfinance
+          pip install requests
 
-      - name: Run Death Cross scanner
+      - name: Run corporate action scanner
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python death_cross.py
+        run: |
+          python corporate_actions.py
 
-      - name: Save alert state
+      - name: Save seen alerts
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if git diff --quiet; then
-            echo "No state changes."
+          git add seen.json
+
+          if git diff --cached --quiet; then
+            echo "No new alerts to save."
           else
-            git add death_cross_state.json
-            git commit -m "Update Death Cross alert state"
+            git commit -m "Update seen corporate actions"
             git push
           fi
