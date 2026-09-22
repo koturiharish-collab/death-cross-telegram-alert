@@ -3,74 +3,27 @@ import json
 import time
 from datetime import datetime, timezone
 
-import requests
 import pandas as pd
+import requests
 import yfinance as yf
 
 
 # ============================================================
-# CONFIG
+# CONFIGURATION
 # ============================================================
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-SEEN_FILE = "seen.json"
+STATE_FILE = "alert_state.json"
 
-NSE_EQUITY_URL = (
-    "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+EMA_FAST = 50
+EMA_SLOW = 200
+
+# NSE NIFTY 500 list
+NIFTY_500_URL = (
+    "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
 )
-
-NSE_HOME = "https://www.nseindia.com/"
-
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/140.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-}
-
-
-# ============================================================
-# SEEN STATE
-# ============================================================
-
-def load_seen():
-
-    if not os.path.exists(SEEN_FILE):
-        return set()
-
-    try:
-        with open(SEEN_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        if isinstance(data, list):
-            return set(data)
-
-    except Exception as e:
-        print(f"Could not read seen.json: {e}")
-
-    return set()
-
-
-def save_seen(seen):
-
-    try:
-
-        with open(SEEN_FILE, "w", encoding="utf-8") as f:
-            json.dump(
-                sorted(seen),
-                f,
-                indent=2
-            )
-
-        print(f"Saved {len(seen)} alert states.")
-
-    except Exception as e:
-        print(f"Could not save seen.json: {e}")
 
 
 # ============================================================
@@ -78,13 +31,8 @@ def save_seen(seen):
 # ============================================================
 
 def send_telegram(message):
-
-    if not TELEGRAM_BOT_TOKEN:
-        print("ERROR: TELEGRAM_BOT_TOKEN missing")
-        return False
-
-    if not TELEGRAM_CHAT_ID:
-        print("ERROR: TELEGRAM_CHAT_ID missing")
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("ERROR: Telegram secrets are missing.")
         return False
 
     url = (
@@ -95,113 +43,97 @@ def send_telegram(message):
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
-        "disable_web_page_preview": True,
+        "disable_web_page_preview": True
     }
 
     try:
-
         response = requests.post(
             url,
-            json=payload,
-            timeout=30
+            data=payload,
+            timeout=20
         )
 
-        if response.status_code == 200:
+        print("Telegram status:", response.status_code)
+        print("Telegram response:", response.text[:500])
 
-            print("Telegram alert sent.")
-            return True
-
-        print(
-            "Telegram error:",
-            response.status_code,
-            response.text
-        )
+        return response.ok
 
     except Exception as e:
-
-        print(f"Telegram request failed: {e}")
-
-    return False
+        print("Telegram error:", e)
+        return False
 
 
 # ============================================================
-# NSE SYMBOL LIST
+# LOAD ALERT STATE
+# ============================================================
+
+def load_state():
+
+    if not os.path.exists(STATE_FILE):
+        return {}
+
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    except Exception:
+        return {}
+
+
+def save_state(state):
+
+    with open(
+        STATE_FILE,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        json.dump(
+            state,
+            f,
+            indent=2,
+            sort_keys=True
+        )
+
+
+# ============================================================
+# GET NSE STOCK LIST
 # ============================================================
 
 def get_nse_symbols():
 
-    print("Downloading NSE equity list...")
+    print("Downloading NSE NIFTY 500 list...")
 
     try:
 
-        session = requests.Session()
+        df = pd.read_csv(NIFTY_500_URL)
 
-        session.headers.update(HEADERS)
-
-        # First visit NSE
-        try:
-            session.get(
-                NSE_HOME,
-                timeout=20
-            )
-        except Exception:
-            pass
-
-        response = session.get(
-            NSE_EQUITY_URL,
-            timeout=30
-        )
-
-        response.raise_for_status()
-
-        from io import StringIO
-
-        df = pd.read_csv(
-            StringIO(response.text)
-        )
-
-        if "SYMBOL" not in df.columns:
-
-            print(
-                "SYMBOL column not found."
-            )
-
+        if "Symbol" not in df.columns:
+            print("NSE Symbol column not found.")
             return []
 
         symbols = (
-            df["SYMBOL"]
+            df["Symbol"]
             .dropna()
             .astype(str)
             .str.strip()
-            .unique()
             .tolist()
         )
 
-        # Remove obvious invalid entries
-        symbols = [
-            s for s in symbols
-            if s
-            and s.upper() != "SYMBOL"
-            and " " not in s
-        ]
+        symbols = sorted(set(symbols))
 
-        print(
-            f"NSE symbols found: {len(symbols)}"
-        )
+        print("Total NSE symbols:", len(symbols))
 
         return symbols
 
     except Exception as e:
 
-        print(
-            f"Could not download NSE symbols: {e}"
-        )
-
+        print("Unable to download NSE list:", e)
         return []
 
 
 # ============================================================
-# GET DAILY DATA
+# DOWNLOAD STOCK DATA
 # ============================================================
 
 def get_stock_data(symbol):
@@ -210,52 +142,48 @@ def get_stock_data(symbol):
 
     try:
 
-        data = yf.download(
+        df = yf.download(
             ticker,
-            period="1y",
+            period="2y",
             interval="1d",
             auto_adjust=False,
             progress=False,
-            threads=False,
-            timeout=20
+            threads=False
         )
 
-        if data is None or data.empty:
+        if df is None or df.empty:
             return None
 
-        # yfinance can return MultiIndex columns
-        if isinstance(data.columns, pd.MultiIndex):
+        # Handle Yahoo multi-index columns
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
 
-            try:
-                close = data["Close"][ticker]
-            except Exception:
+        required_columns = [
+            "Close"
+        ]
 
-                try:
-                    close = data["Close"].iloc[:, 0]
-                except Exception:
-                    return None
-
-        else:
-
-            if "Close" not in data.columns:
+        for column in required_columns:
+            if column not in df.columns:
                 return None
 
-            close = data["Close"]
+        df = df[["Close"]].copy()
 
-        close = pd.to_numeric(
-            close,
+        df["Close"] = pd.to_numeric(
+            df["Close"],
             errors="coerce"
-        ).dropna()
+        )
 
-        if len(close) < 210:
+        df.dropna(inplace=True)
+
+        if len(df) < 210:
             return None
 
-        return close
+        return df
 
     except Exception as e:
 
         print(
-            f"{symbol}: data error - {e}"
+            f"{symbol}: data error -> {e}"
         )
 
         return None
@@ -265,104 +193,102 @@ def get_stock_data(symbol):
 # CHECK FRESH DEATH CROSS
 # ============================================================
 
-def check_death_cross(close):
+def check_death_cross(symbol):
 
-    ema50 = close.ewm(
-        span=50,
-        adjust=False
-    ).mean()
+    df = get_stock_data(symbol)
 
-    ema200 = close.ewm(
-        span=200,
-        adjust=False
-    ).mean()
-
-    if len(ema50) < 2 or len(ema200) < 2:
+    if df is None:
         return None
 
-    previous_ema50 = float(
-        ema50.iloc[-2]
+    # --------------------------------------------------------
+    # IMPORTANT:
+    #
+    # We use ONLY COMPLETED daily candles.
+    #
+    # -1 = today's possibly unfinished candle
+    # -2 = last completed candle
+    # -3 = candle before that
+    #
+    # This prevents an intraday temporary crossover from
+    # generating a false signal.
+    # --------------------------------------------------------
+
+    if len(df) < 205:
+        return None
+
+    completed = df.iloc[:-1].copy()
+
+    if len(completed) < 205:
+        return None
+
+    # Calculate EMA
+    completed["EMA50"] = (
+        completed["Close"]
+        .ewm(
+            span=EMA_FAST,
+            adjust=False
+        )
+        .mean()
     )
 
-    previous_ema200 = float(
-        ema200.iloc[-2]
+    completed["EMA200"] = (
+        completed["Close"]
+        .ewm(
+            span=EMA_SLOW,
+            adjust=False
+        )
+        .mean()
     )
 
-    current_ema50 = float(
-        ema50.iloc[-1]
-    )
+    # Last two COMPLETED candles
+    previous = completed.iloc[-2]
+    current = completed.iloc[-1]
 
-    current_ema200 = float(
-        ema200.iloc[-1]
-    )
+    previous_50 = float(previous["EMA50"])
+    previous_200 = float(previous["EMA200"])
 
-    # ========================================================
-    # THIS IS THE IMPORTANT PART
+    current_50 = float(current["EMA50"])
+    current_200 = float(current["EMA200"])
+
+    # --------------------------------------------------------
+    # TRUE FRESH DEATH CROSS
     #
     # Previous:
-    # 50 EMA >= 200 EMA
+    #       EMA50 >= EMA200
     #
     # Current:
-    # 50 EMA < 200 EMA
-    #
-    # Therefore ONLY the actual crossover is alerted.
-    # ========================================================
+    #       EMA50 < EMA200
+    # --------------------------------------------------------
 
     fresh_cross = (
-        previous_ema50 >= previous_ema200
+        previous_50 >= previous_200
         and
-        current_ema50 < current_ema200
+        current_50 < current_200
     )
 
     if not fresh_cross:
         return None
 
-    latest_close = float(
-        close.iloc[-1]
-    )
+    cross_date = current.name
 
-    latest_date = close.index[-1]
+    if hasattr(cross_date, "strftime"):
+        cross_date = cross_date.strftime("%Y-%m-%d")
+    else:
+        cross_date = str(cross_date)
 
-    try:
-        date_string = latest_date.strftime(
-            "%Y-%m-%d"
-        )
-    except Exception:
-        date_string = datetime.now(
-            timezone.utc
-        ).strftime("%Y-%m-%d")
+    close_price = float(current["Close"])
 
     return {
-        "date": date_string,
-        "close": latest_close,
-        "ema50": current_ema50,
-        "ema200": current_ema200,
+        "symbol": symbol,
+        "cross_date": cross_date,
+        "close": close_price,
+        "ema50": current_50,
+        "ema200": current_200
     }
 
 
 # ============================================================
-# TELEGRAM MESSAGE
-# ============================================================
-
-def make_message(
-    symbol,
-    result
-):
-
-    return (
-        "🔴 FRESH DEATH CROSS\n\n"
-        f"📊 Stock: {symbol}\n"
-        f"📅 Cross Date: {result['date']}\n"
-        f"💰 Close: ₹{result['close']:.2f}\n"
-        f"📉 50 EMA: ₹{result['ema50']:.2f}\n"
-        f"📈 200 EMA: ₹{result['ema200']:.2f}\n\n"
-        "⚠️ 50 EMA crossed BELOW 200 EMA\n\n"
-        "🤖 NSE Death Cross Scanner"
-    )
-
-
-# ============================================================
-# MAIN
+# MAIN SCANNER
 # ============================================================
 
 def main():
@@ -371,128 +297,115 @@ def main():
     print("NSE FRESH DEATH CROSS SCANNER")
     print("=" * 65)
 
-    seen = load_seen()
-
     print(
-        f"Previously saved alerts: {len(seen)}"
+        "Run time:",
+        datetime.now(timezone.utc).isoformat()
     )
+
+    state = load_state()
 
     symbols = get_nse_symbols()
 
     if not symbols:
 
-        print(
-            "No NSE symbols found."
-        )
-
+        print("No symbols received.")
         return
 
-    fresh_count = 0
-    checked_count = 0
+    new_alerts = 0
 
-    for index, symbol in enumerate(
-        symbols,
-        start=1
-    ):
+    for index, symbol in enumerate(symbols, start=1):
 
         print(
-            f"[{index}/{len(symbols)}] "
-            f"Checking {symbol}"
+            f"[{index}/{len(symbols)}] Checking {symbol}"
         )
 
-        close = get_stock_data(
-            symbol
-        )
-
-        if close is None:
-            continue
-
-        checked_count += 1
-
-        result = check_death_cross(
-            close
-        )
-
-        # ----------------------------------------------------
-        # NO FRESH CROSS
-        # ----------------------------------------------------
+        result = check_death_cross(symbol)
 
         if result is None:
-
             continue
 
         # ----------------------------------------------------
-        # UNIQUE EVENT
+        # UNIQUE ALERT KEY
+        #
+        # Same stock + same cross date = same alert.
+        # Therefore it cannot repeatedly send the same alert.
         # ----------------------------------------------------
 
-        event_key = (
-            f"{symbol}|"
-            f"DEATH_CROSS|"
-            f"{result['date']}"
+        alert_key = (
+            f"{result['symbol']}_"
+            f"{result['cross_date']}"
         )
 
-        # ----------------------------------------------------
-        # ALREADY SENT
-        # ----------------------------------------------------
-
-        if event_key in seen:
+        if alert_key in state:
 
             print(
-                f"{symbol}: already alerted"
+                f"{symbol}: already alerted "
+                f"for {result['cross_date']}"
             )
 
             continue
 
-        # ----------------------------------------------------
-        # FRESH CROSS
-        # ----------------------------------------------------
+        message = (
+            "🔴 FRESH DEATH CROSS\n\n"
 
-        message = make_message(
-            symbol,
-            result
+            f"📊 Stock: {result['symbol']}\n"
+            f"📅 Cross Date: {result['cross_date']}\n\n"
+
+            f"💰 Close: ₹{result['close']:.2f}\n"
+            f"📉 50 EMA: ₹{result['ema50']:.2f}\n"
+            f"📈 200 EMA: ₹{result['ema200']:.2f}\n\n"
+
+            "⚠️ 50 EMA crossed BELOW 200 EMA\n\n"
+
+            f"🔗 Stock:\n"
+            f"https://finance.yahoo.com/quote/"
+            f"{result['symbol']}.NS/\n\n"
+
+            "🤖 NSE Fresh Death Cross Scanner"
         )
 
         print()
-        print("🔥 FRESH DEATH CROSS FOUND")
         print(message)
         print()
 
-        success = send_telegram(
-            message
-        )
+        sent = send_telegram(message)
 
-        if success:
+        if sent:
 
-            seen.add(
-                event_key
+            state[alert_key] = {
+                "symbol": result["symbol"],
+                "cross_date": result["cross_date"],
+                "ema50": result["ema50"],
+                "ema200": result["ema200"],
+                "sent_at": datetime.now(
+                    timezone.utc
+                ).isoformat()
+            }
+
+            save_state(state)
+
+            new_alerts += 1
+
+            print(
+                f"✅ Telegram alert sent: {symbol}"
             )
 
-            fresh_count += 1
+        else:
 
-            # Save immediately
-            # so an interruption does not
-            # cause the same alert again.
-            save_seen(seen)
+            print(
+                f"❌ Telegram alert failed: {symbol}"
+            )
 
-        # Small delay
-        time.sleep(0.15)
+        # Avoid hitting Yahoo too aggressively
+        time.sleep(0.3)
 
-    # Final save
-    save_seen(seen)
-
+    print()
     print("=" * 65)
-    print(
-        f"Stocks checked: {checked_count}"
-    )
-    print(
-        f"Fresh death crosses: {fresh_count}"
-    )
+    print("SCAN FINISHED")
+    print("New alerts:", new_alerts)
+    print("Total saved alerts:", len(state))
     print("=" * 65)
 
-
-# ============================================================
-# START
-# ============================================================
 
 if __name__ == "__main__":
     main()
