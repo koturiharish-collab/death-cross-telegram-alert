@@ -1,266 +1,358 @@
 import os
-import time
 import json
+import re
 import requests
-import pandas as pd
-import yfinance as yf
-from io import StringIO
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+SEEN_FILE = "seen.json"
+
+NSE_URL = "https://www.nseindia.com/api/corporate-announcements"
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/140.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.nseindia.com/",
+    "Connection": "keep-alive",
+}
+
+
+# ============================================================
+# INDIA DATE
+# ============================================================
+
+def get_today_india():
+    return datetime.now(ZoneInfo("Asia/Kolkata")).date()
+
+
+# ============================================================
+# LOAD SEEN ALERTS
+# ============================================================
+
+def load_seen():
+    if not os.path.exists(SEEN_FILE):
+        return set()
+
+    try:
+        with open(SEEN_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if isinstance(data, list):
+            return set(data)
+
+        return set()
+
+    except Exception as e:
+        print(f"Could not read seen.json: {e}")
+        return set()
+
+
+# ============================================================
+# SAVE SEEN ALERTS
+# ============================================================
+
+def save_seen(seen):
+    with open(SEEN_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(seen), f, indent=2)
+
 
 # ============================================================
 # TELEGRAM
 # ============================================================
 
-TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
-
-STATE_FILE = "death_cross_state.json"
-
-NSE_URL = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
-
-IST = ZoneInfo("Asia/Kolkata")
-
-
 def send_telegram(message):
+
+    if not TELEGRAM_BOT_TOKEN:
+        print("ERROR: TELEGRAM_BOT_TOKEN is missing.")
+        return False
+
+    if not TELEGRAM_CHAT_ID:
+        print("ERROR: TELEGRAM_CHAT_ID is missing.")
+        return False
+
     url = (
-        f"https://api.telegram.org/"
-        f"bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        f"https://api.telegram.org/bot"
+        f"{TELEGRAM_BOT_TOKEN}/sendMessage"
     )
 
-    response = requests.post(
-        url,
-        data={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": message
-        },
-        timeout=20
-    )
-
-    response.raise_for_status()
-
-    print("Telegram message sent successfully.")
-
-
-# ============================================================
-# NSE SYMBOLS
-# ============================================================
-
-def get_nse_symbols():
-
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 "
-            "Chrome/140 Safari/537.36"
-        )
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "disable_web_page_preview": True,
     }
 
-    response = requests.get(
-        NSE_URL,
-        headers=headers,
-        timeout=30
-    )
-
-    response.raise_for_status()
-
-    df = pd.read_csv(StringIO(response.text))
-
-    df.columns = [str(c).strip() for c in df.columns]
-
-    if "SERIES" in df.columns:
-        df = df[
-            df["SERIES"].astype(str).str.strip() == "EQ"
-        ]
-
-    symbols = (
-        df["SYMBOL"]
-        .astype(str)
-        .str.strip()
-        .dropna()
-        .unique()
-        .tolist()
-    )
-
-    return symbols
-
-
-# ============================================================
-# STATE
-# ============================================================
-
-def load_state():
-
-    if not os.path.exists(STATE_FILE):
-        return {}
-
     try:
-        with open(STATE_FILE, "r") as f:
-            return json.load(f)
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=30
+        )
 
-    except Exception:
-        return {}
+        response.raise_for_status()
 
+        print("Telegram alert sent successfully.")
+        return True
 
-def save_state(state):
-
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
-
-
-# ============================================================
-# DAILY MARKET DATA
-# ============================================================
-
-def get_completed_daily_data(symbol):
-
-    ticker = f"{symbol}.NS"
-
-    data = yf.download(
-        ticker,
-        period="1y",
-        interval="1d",
-        auto_adjust=False,
-        progress=False,
-        threads=False
-    )
-
-    if data.empty:
-        return data
-
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.get_level_values(0)
-
-    data = data.dropna(subset=["Close"])
-
-    # Remove today's incomplete daily candle
-    today_ist = datetime.now(IST).date()
-
-    if getattr(data.index, "tz", None) is not None:
-        dates = data.index.tz_convert(IST).date
-    else:
-        dates = data.index.date
-
-    data = data.loc[dates < today_ist]
-
-    return data
+    except requests.RequestException as e:
+        print(f"Telegram error: {e}")
+        return False
 
 
 # ============================================================
-# DEATH CROSS CHECK
+# NSE SESSION
 # ============================================================
 
-def check_stock(symbol, state):
+def create_nse_session():
+
+    session = requests.Session()
+
+    session.headers.update(HEADERS)
+
+    session.headers.update({
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Host": "www.nseindia.com",
+        "Referer": "https://www.nseindia.com/",
+    })
+
+    return session
+
+
+# ============================================================
+# GET TODAY'S NSE ANNOUNCEMENTS ONLY
+# ============================================================
+
+def get_announcements():
+
+    session = create_nse_session()
+
+    today = get_today_india()
+
+    today_string = today.strftime("%d-%m-%Y")
+
+    params = {
+        "index": "equities",
+        "from_date": today_string,
+        "to_date": today_string,
+    }
+
+    print(f"Checking NSE announcements for: {today_string}")
 
     try:
 
-        data = get_completed_daily_data(symbol)
+        response = session.get(
+            NSE_URL,
+            params=params,
+            timeout=30
+        )
 
-        if data.empty or len(data) < 205:
-            return
+        response.raise_for_status()
 
-        # ----------------------------------------------------
-        # 50 EMA
-        # ----------------------------------------------------
+        data = response.json()
 
-        data["EMA50"] = (
-            data["Close"]
-            .ewm(
-                span=50,
-                adjust=False
+        if isinstance(data, list):
+            return data
+
+        if isinstance(data, dict):
+            return data.get("data", [])
+
+        return []
+
+    except requests.RequestException as e:
+        print(f"NSE request failed: {e}")
+        return []
+
+    except ValueError as e:
+        print(f"NSE returned invalid JSON: {e}")
+        return []
+
+
+# ============================================================
+# IDENTIFY BONUS / STOCK SPLIT
+# ============================================================
+
+def identify_action(announcement):
+
+    text_parts = []
+
+    fields = [
+        "desc",
+        "description",
+        "subject",
+        "details",
+        "headline",
+        "attchmntText",
+        "announcement",
+        "purpose",
+    ]
+
+    for key in fields:
+
+        value = announcement.get(key)
+
+        if value:
+            text_parts.append(str(value))
+
+    text = " ".join(text_parts).lower()
+
+    text = re.sub(r"\s+", " ", text)
+
+    # BONUS
+    bonus_patterns = [
+        r"\bbonus\b",
+        r"\bbonus issue\b",
+        r"\bbonus shares\b",
+        r"\bissue of bonus\b",
+    ]
+
+    for pattern in bonus_patterns:
+
+        if re.search(pattern, text, re.IGNORECASE):
+            return "BONUS"
+
+    # STOCK SPLIT
+    split_patterns = [
+        r"\bstock split\b",
+        r"\bshare split\b",
+        r"\bface value\b.*\bsplit\b",
+        r"\bsplit\b.*\bface value\b",
+        r"\bsub-division\b",
+        r"\bsub division\b",
+        r"\bsubdivision\b",
+    ]
+
+    for pattern in split_patterns:
+
+        if re.search(pattern, text, re.IGNORECASE):
+            return "STOCK SPLIT"
+
+    return None
+
+
+# ============================================================
+# UNIQUE ANNOUNCEMENT ID
+# ============================================================
+
+def announcement_id(announcement):
+
+    # Prefer NSE's own identifiers
+    for key in [
+        "seq_id",
+        "seqId",
+        "id",
+    ]:
+
+        value = announcement.get(key)
+
+        if value:
+            return f"{key}:{value}"
+
+    # Build a stable fallback ID
+    symbol = str(
+        announcement.get("symbol")
+        or announcement.get("symbolName")
+        or ""
+    )
+
+    description = str(
+        announcement.get("desc")
+        or announcement.get("description")
+        or announcement.get("subject")
+        or ""
+    )
+
+    broadcast_date = str(
+        announcement.get("broadcastDate")
+        or announcement.get("date")
+        or ""
+    )
+
+    return (
+        f"{symbol}|"
+        f"{broadcast_date}|"
+        f"{description.strip().lower()}"
+    )
+
+
+# ============================================================
+# FORMAT TELEGRAM MESSAGE
+# ============================================================
+
+def format_message(action, announcement):
+
+    symbol = (
+        announcement.get("symbol")
+        or announcement.get("symbolName")
+        or "Unknown"
+    )
+
+    company = (
+        announcement.get("companyName")
+        or announcement.get("symbol")
+        or "Unknown company"
+    )
+
+    description = (
+        announcement.get("desc")
+        or announcement.get("description")
+        or announcement.get("subject")
+        or announcement.get("details")
+        or announcement.get("headline")
+        or "Corporate action announcement"
+    )
+
+    date_value = (
+        announcement.get("broadcastDate")
+        or announcement.get("date")
+        or announcement.get("sort_date")
+        or ""
+    )
+
+    attachment = (
+        announcement.get("attchmntFile")
+        or announcement.get("attachment")
+        or announcement.get("url")
+        or ""
+    )
+
+    message = (
+        f"🚨 FRESH {action} ALERT\n\n"
+        f"🏢 Company: {company}\n"
+        f"📌 Symbol: {symbol}\n"
+        f"📅 Announcement Date: {date_value}\n\n"
+        f"📝 Details:\n{description}"
+    )
+
+    if attachment:
+
+        attachment = str(attachment)
+
+        if attachment.startswith("http"):
+            message += f"\n\n🔗 {attachment}"
+
+        else:
+            message += (
+                "\n\n🔗 https://www.nseindia.com/"
+                + attachment.lstrip("/")
             )
-            .mean()
-        )
 
-        # ----------------------------------------------------
-        # 200 EMA
-        # ----------------------------------------------------
+    message += "\n\n🤖 NSE Corporate Action Scanner"
 
-        data["EMA200"] = (
-            data["Close"]
-            .ewm(
-                span=200,
-                adjust=False
-            )
-            .mean()
-        )
-
-        # Previous completed day
-        previous = data.iloc[-2]
-
-        # Latest completed day
-        current = data.iloc[-1]
-
-        if (
-            pd.isna(previous["EMA50"])
-            or pd.isna(previous["EMA200"])
-            or pd.isna(current["EMA50"])
-            or pd.isna(current["EMA200"])
-        ):
-            return
-
-        # ----------------------------------------------------
-        # FRESH DEATH CROSS
-        #
-        # Previous day:
-        # 50 EMA >= 200 EMA
-        #
-        # Latest day:
-        # 50 EMA < 200 EMA
-        # ----------------------------------------------------
-
-        fresh_cross = (
-            previous["EMA50"] >= previous["EMA200"]
-            and
-            current["EMA50"] < current["EMA200"]
-        )
-
-        if not fresh_cross:
-            return
-
-        cross_date = current.name.strftime("%Y-%m-%d")
-
-        # ----------------------------------------------------
-        # PREVENT DUPLICATE ALERT
-        # ----------------------------------------------------
-
-        if state.get(symbol) == cross_date:
-            return
-
-        close_price = float(current["Close"])
-
-        ema50 = float(current["EMA50"])
-
-        ema200 = float(current["EMA200"])
-
-        # ----------------------------------------------------
-        # TELEGRAM ALERT
-        # ----------------------------------------------------
-
-        message = (
-            "🔴 FRESH DEATH CROSS\n\n"
-            f"Stock: {symbol}\n"
-            f"Timeframe: 1 DAY\n"
-            f"Cross Date: {cross_date}\n"
-            f"Close: ₹{close_price:.2f}\n"
-            f"50 EMA: ₹{ema50:.2f}\n"
-            f"200 EMA: ₹{ema200:.2f}\n\n"
-            "50 EMA crossed BELOW 200 EMA."
-        )
-
-        send_telegram(message)
-
-        state[symbol] = cross_date
-
-        print(
-            f"ALERT SENT: {symbol} - {cross_date}"
-        )
-
-    except Exception as e:
-
-        print(
-            f"ERROR {symbol}: {e}"
-        )
+    return message
 
 
 # ============================================================
@@ -269,44 +361,91 @@ def check_stock(symbol, state):
 
 def main():
 
-    print(
-        "Starting NSE Death Cross scanner..."
-    )
+    print("=" * 60)
+    print("NSE FRESH BONUS & STOCK SPLIT SCANNER")
+    print("=" * 60)
 
-    symbols = get_nse_symbols()
+    today = get_today_india()
 
-    print(
-        f"Found {len(symbols)} NSE EQ stocks."
-    )
+    print(f"India date: {today}")
 
-    state = load_state()
+    seen = load_seen()
 
-    for i, symbol in enumerate(
-        symbols,
-        start=1
-    ):
+    print(f"Previously alerted: {len(seen)}")
 
-        print(
-            f"[{i}/{len(symbols)}] Checking {symbol}"
+    announcements = get_announcements()
+
+    print(f"Announcements received from NSE: {len(announcements)}")
+
+    if not announcements:
+
+        print("No NSE announcements found for today.")
+        save_seen(seen)
+        return
+
+    new_alerts = 0
+
+    for announcement in announcements:
+
+        action = identify_action(announcement)
+
+        if action is None:
+            continue
+
+        ann_id = announcement_id(announcement)
+
+        print()
+        print(f"Detected: {action}")
+        print(f"ID: {ann_id}")
+
+        # ====================================================
+        # DUPLICATE CHECK
+        # ====================================================
+
+        if ann_id in seen:
+
+            print("Already alerted. SKIPPING.")
+
+            continue
+
+        # ====================================================
+        # NEW ALERT
+        # ====================================================
+
+        message = format_message(
+            action,
+            announcement
         )
 
-        check_stock(
-            symbol,
-            state
-        )
+        print("NEW FRESH ALERT:")
+        print(message)
 
-        time.sleep(0.3)
+        sent = send_telegram(message)
 
-    save_state(state)
+        if sent:
 
-    print(
-        "Scan completed."
-    )
+            seen.add(ann_id)
 
+            new_alerts += 1
 
-# ============================================================
-# START
-# ============================================================
+            print("Added to seen.json.")
+
+        else:
+
+            print("Telegram failed. NOT adding to seen.json.")
+
+    # ========================================================
+    # SAVE SEEN IDS
+    # ========================================================
+
+    save_seen(seen)
+
+    print()
+    print("=" * 60)
+    print(f"NEW ALERTS SENT: {new_alerts}")
+    print(f"TOTAL SEEN ALERTS: {len(seen)}")
+    print("=" * 60)
+
 
 if __name__ == "__main__":
     main()
