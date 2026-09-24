@@ -2,8 +2,8 @@ name: NSE Fresh Death Cross Alert
 
 on:
   schedule:
-    # Every hour
-    - cron: "0 * * * *"
+    # 10:15 UTC = 15:45 IST
+    - cron: "15 10 * * 1-5"
 
   workflow_dispatch:
 
@@ -18,21 +18,33 @@ jobs:
 
     steps:
 
+      # --------------------------------------------------
+      # CHECKOUT
+      # --------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # --------------------------------------------------
+      # SETUP PYTHON
+      # --------------------------------------------------
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      # --------------------------------------------------
+      # INSTALL DEPENDENCIES
+      # --------------------------------------------------
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # --------------------------------------------------
+      # RUN DEATH CROSS SCANNER
+      # --------------------------------------------------
       - name: Run Fresh Death Cross Scanner
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -40,15 +52,27 @@ jobs:
         run: |
           python death_cross.py
 
-      - name: Save alert state
+      # --------------------------------------------------
+      # MAKE SURE STATE FILE EXISTS
+      # --------------------------------------------------
+      - name: Ensure death state exists
+        run: |
+          if [ ! -f death_alert_state.json ]; then
+            echo "{}" > death_alert_state.json
+          fi
+
+      # --------------------------------------------------
+      # SAVE DEATH CROSS STATE
+      # --------------------------------------------------
+      - name: Save death alert state
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add alert_state.json
+          git add death_alert_state.json
 
           if git diff --cached --quiet; then
-            echo "No new alert state to save."
+            echo "No new death cross alert state to save."
           else
             git commit -m "Update death cross alert state"
             git push
