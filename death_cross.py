@@ -155,7 +155,8 @@ def send_telegram(text):
               "disable_web_page_preview": True},
         timeout=20,
     )
-    r.raise_for_status()
+    if not r.ok:
+        raise RuntimeError(f"{r.status_code} {r.text}")
 
 
 def load_state():
@@ -169,7 +170,7 @@ def line_for(t, kind, h):
     name = t.replace(".NS", "")
     link = f"https://www.tradingview.com/chart/?symbol=NSE:{quote(name)}" if t.endswith(".NS") else None
     label = f'<a href="{link}">{html.escape(name)}</a>' if link else html.escape(t)
-    sign = ">" if kind == "golden" else "<"
+    sign = "&gt;" if kind == "golden" else "&lt;"
     return f"• <b>{label}</b> ₹{h['close']:.2f} | {MA_TYPE}{FAST} {h['fast']:.1f} {sign} {MA_TYPE}{SLOW} {h['slow']:.1f} | {h['date']}"
 
 
