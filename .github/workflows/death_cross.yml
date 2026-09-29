@@ -2,7 +2,9 @@ name: Death Cross Alert (All NSE stocks)
 
 on:
   schedule:
-    - cron: "*/30 3-10 * * 1-5"
+    # Once a day, Mon-Fri, 16:32 IST (after NSE close 15:30). Cron is UTC.
+    # Different minute from the golden cross repo, and odd, to avoid busy GitHub slots.
+    - cron: "2 11 * * 1-5"
   workflow_dispatch:
     inputs:
       test:
@@ -35,12 +37,12 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          ENABLE_GOLDEN: "false"
+          # MIN_AVG_VOLUME: "50000"   # uncomment to skip illiquid stocks
         run: |
           if [ "${{ inputs.test }}" = "true" ]; then
-            python death_cross.py --test
+            python death_cross_alert.py --test
           else
-            python death_cross.py
+            python death_cross_alert.py
           fi
 
       - name: Save state
@@ -53,3 +55,20 @@ jobs:
             git pull --rebase -q || true
             git push
           fi
+
+      # Heartbeat: if you get no message on a weekday, the job didn't run.
+      - name: Heartbeat
+        if: always() && inputs.test != true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ "$JOB_STATUS" = "success" ]; then
+            MSG="✅ Death Cross scan finished ($(TZ=Asia/Kolkata date '+%d %b %H:%M IST'))"
+          else
+            MSG="❌ Death Cross scan FAILED - check GitHub Actions logs"
+          fi
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d text="${MSG}" > /dev/null
