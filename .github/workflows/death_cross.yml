@@ -3,7 +3,6 @@ name: Death Cross Alert (All NSE stocks)
 on:
   schedule:
     # Once a day, Mon-Fri, 16:32 IST (after NSE close 15:30). Cron is UTC.
-    # Different minute from the golden cross repo, and odd, to avoid busy GitHub slots.
     - cron: "2 11 * * 1-5"
   workflow_dispatch:
     inputs:
@@ -33,6 +32,24 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      # Auto-detect the Python script so the filename doesn't have to be guessed.
+      - name: Find script
+        run: |
+          SCRIPT=$(find . -maxdepth 2 -name '*.py' -not -path './.git/*' | grep -i 'death' | head -1)
+          if [ -z "$SCRIPT" ]; then
+            COUNT=$(find . -maxdepth 2 -name '*.py' -not -path './.git/*' | wc -l)
+            if [ "$COUNT" -eq 1 ]; then
+              SCRIPT=$(find . -maxdepth 2 -name '*.py' -not -path './.git/*')
+            fi
+          fi
+          if [ -z "$SCRIPT" ]; then
+            echo "Could not pick a script automatically. Python files found:"
+            find . -maxdepth 2 -name '*.py' -not -path './.git/*'
+            exit 1
+          fi
+          echo "Using script: $SCRIPT"
+          echo "SCRIPT=$SCRIPT" >> "$GITHUB_ENV"
+
       - name: Scan
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -40,9 +57,9 @@ jobs:
           # MIN_AVG_VOLUME: "50000"   # uncomment to skip illiquid stocks
         run: |
           if [ "${{ inputs.test }}" = "true" ]; then
-            python death_cross_alert.py --test
+            python "$SCRIPT" --test
           else
-            python death_cross_alert.py
+            python "$SCRIPT"
           fi
 
       - name: Save state
