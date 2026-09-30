@@ -7,6 +7,7 @@
   "CIPLA.NS|death": "2026-09-30",
   "CRESTO.NS": "2026-09-30",
   "EVEREADY.NS|death": "2026-09-30",
+  "EXCELINDUS.NS|death": "2026-09-30",
   "FORTIS.NS|death": "2026-09-28",
   "GANECOS.NS|death": "2026-09-29",
   "GANESHHOU.NS|death": "2026-09-29",
@@ -14,13 +15,18 @@
   "GOKUL.NS|death": "2026-09-30",
   "GPTINFRA.NS": "2026-09-30",
   "HINDCON.NS": "2026-09-30",
+  "INDOSTAR.NS|death": "2026-09-30",
   "JSWENERGY.NS|death": "2026-09-29",
   "KOTYARK.NS|death": "2026-09-29",
   "MAITHANALL.NS|death": "2026-09-30",
   "MANINFRA.NS": "2026-09-29",
   "POLICYBZR.NS|death": "2026-09-29",
   "PREMIERENE.NS|death": "2026-09-29",
+  "SAKHTISUG.NS|death": "2026-09-30",
   "SALONA.NS": "2026-09-29",
   "TEMBO.NS": "2026-09-30",
-  "TPLPLASTEH.NS|death": "2026-09-29"
+  "TPLPLASTEH.NS": "2026-09-30",
+  "TPLPLASTEH.NS|death": "2026-09-29",
+  "TREL.NS": "2026-09-30",
+  "ZEELEARN.NS|death": "2026-09-30"
 }
