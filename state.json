@@ -55,8 +55,10 @@
   "BOROLTD.NS": "2026-11-03",
   "BRIGADE.NS|death": "2026-10-09",
   "BTML.NS|death": "2026-10-09",
+  "BUILDPRO.NS|death": "2026-11-19",
   "CANHLIFE.NS|death": "2026-10-30",
   "CANTABIL.NS": "2026-11-09",
+  "CAPITALSFB.NS": "2026-11-19",
   "CAPITALSFB.NS|death": "2026-10-28",
   "CARERATING.NS|death": "2026-11-18",
   "CARRARO.NS|death": "2026-10-23",
@@ -340,6 +342,7 @@
   "SUNDROP.NS|death": "2026-10-19",
   "SUNTV.NS": "2026-10-15",
   "SUPERHOUSE.NS|death": "2026-10-29",
+  "SUPRIYA.NS|death": "2026-11-19",
   "SURYODAY.NS|death": "2026-10-22",
   "SUTLEJTEX.NS|death": "2026-11-02",
   "SVPGLOB.NS": "2026-11-13",
@@ -355,6 +358,7 @@
   "TEMBO.NS": "2026-10-06",
   "TEMBO.NS|death": "2026-10-01",
   "THEMISMED.NS|death": "2026-10-30",
+  "TINNARUBR.NS": "2026-11-19",
   "TINNARUBR.NS|death": "2026-11-19",
   "TITAGARH.NS|death": "2026-10-14",
   "TNPL.NS|death": "2026-10-22",
@@ -388,5 +392,6 @@
   "ZFCVINDIA.NS|death": "2026-10-09",
   "ZOTA.NS": "2026-10-16",
   "ZUARIIND.NS": "2026-10-06",
-  "ZUARIIND.NS|death": "2026-10-19"
+  "ZUARIIND.NS|death": "2026-10-19",
+  "ZYDUSWELL.NS|death": "2026-11-19"
 }
