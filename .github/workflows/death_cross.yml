@@ -1,9 +1,12 @@
-name: Death Cross Alert (All NSE stocks)
+
+name: Combined Golden and Death Cross Scanner
 
 on:
   schedule:
-    # Every 30 min, Mon-Fri, 08:54-16:24 IST. Cron is UTC. Different minutes from golden cross.
-    - cron: "24,54 3-10 * * 1-5"
+    # Every 15 minutes, Monday-Friday.
+    # UTC schedule = 08:32 to 16:17 IST.
+    - cron: "2,17,32,47 3-10 * * 1-5"
+
   workflow_dispatch:
     inputs:
       test:
@@ -15,83 +18,69 @@ permissions:
   contents: write
 
 concurrency:
-  group: death-cross
+  group: combined-ema-cross
   cancel-in-progress: false
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
 
-      - run: pip install -r requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
-      # Auto-detect the Python script so the filename doesn't have to be guessed.
-      - name: Find script
-        run: |
-          SCRIPT=$(find . -maxdepth 2 -name '*.py' -not -path './.git/*' | grep -i 'death' | head -1)
-          if [ -z "$SCRIPT" ]; then
-            COUNT=$(find . -maxdepth 2 -name '*.py' -not -path './.git/*' | wc -l)
-            if [ "$COUNT" -eq 1 ]; then
-              SCRIPT=$(find . -maxdepth 2 -name '*.py' -not -path './.git/*')
-            fi
-          fi
-          if [ -z "$SCRIPT" ]; then
-            echo "Could not pick a script automatically. Python files found:"
-            find . -maxdepth 2 -name '*.py' -not -path './.git/*'
-            exit 1
-          fi
-          echo "Using script: $SCRIPT"
-          echo "SCRIPT=$SCRIPT" >> "$GITHUB_ENV"
-
-      - name: Scan
+      - name: Run combined scanner
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          ENABLE_GOLDEN: "false"
+
+          SHARE_SANKET_TOKEN: ${{ secrets.SHARE_SANKET_TOKEN }}
+          SHARE_SANKET_REPO: sharesanket/corporate-actions.yml
+          SHARE_SANKET_BRANCH: main
+
+          FAST_MA: "50"
+          SLOW_MA: "200"
+          MA_TYPE: "EMA"
+
+          ENABLE_GOLDEN: "true"
           ENABLE_DEATH: "true"
-          # MIN_AVG_VOLUME: "50000"   # uncomment to skip illiquid stocks
+
+          INCLUDE_LIVE_BAR: "false"
+          FRESH_BARS: "1"
+
+          NSE_ALL: "true"
+          NSE_SERIES: "EQ"
+          MIN_AVG_VOLUME: "0"
+          BATCH_SIZE: "150"
+
         run: |
           if [ "${{ inputs.test }}" = "true" ]; then
-            python "$SCRIPT" --test
+            python death_cross.py --test
           else
-            python "$SCRIPT"
+            python death_cross.py
           fi
 
-      - name: Save state
+      - name: Save scanner state
         if: always()
         run: |
           git add state.json nse_equities.txt 2>/dev/null || true
+
           if ! git diff --cached --quiet; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git commit -m "update alert state"
-            git pull --rebase -q || true
-            git push
-          fi
 
-      # ❌ on any failure. ✅ only from the last scheduled run of the day (16:00 IST or later).
-      - name: Telegram status
-        if: always() && inputs.test != true
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          JOB_STATUS: ${{ job.status }}
-        run: |
-          HOUR=$(TZ=Asia/Kolkata date +%H)
-          if [ "$JOB_STATUS" != "success" ]; then
-            MSG="❌ Death Cross scan FAILED - check GitHub Actions logs"
-          elif [ "$GITHUB_EVENT_NAME" = "schedule" ] && [ "$HOUR" -ge 16 ]; then
-            MSG="✅ Death Cross: last scan of the day done ($(TZ=Asia/Kolkata date '+%d %b %H:%M IST'))"
-          else
-            exit 0
+            git commit -m "Update combined EMA cross scanner state"
+
+            git pull --rebase origin main
+            git push origin main
           fi
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d text="${MSG}" > /dev/null
