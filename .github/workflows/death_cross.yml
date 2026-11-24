@@ -54,6 +54,8 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ENABLE_GOLDEN: "false"
+          ENABLE_DEATH: "true"
           # MIN_AVG_VOLUME: "50000"   # uncomment to skip illiquid stocks
         run: |
           if [ "${{ inputs.test }}" = "true" ]; then
